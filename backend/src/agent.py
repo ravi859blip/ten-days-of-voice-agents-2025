@@ -1,5 +1,9 @@
 import logging
-
+import json
+import os
+import requests
+from datetime import datetime
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -12,42 +16,158 @@ from livekit.agents import (
     cli,
     metrics,
     tokenize,
-    # function_tool,
-    # RunContext
+    function_tool,
+    RunContext,
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+from prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Notion configuration
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+NOTION_HEADERS = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+}
+
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+            instructions=SYSTEM_PROMPT,
         )
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+    @function_tool
+    async def read_wellness_log(self, context: RunContext) -> str:
+        """Read the previous wellness check-in log from JSON file.
+        
+        Use this at the start of a session to reference past moods/goals.
+        
+        Returns:
+            The full JSON content as a string, or 'No previous log found.' if file doesn't exist.
+        """
+        try:
+            with open('wellness_log.json', 'r') as f:
+                log = json.load(f)
+            return json.dumps(log, indent=2)
+        except FileNotFoundError:
+            return "No previous log found."
+
+    @function_tool
+    async def write_wellness_log(self, context: RunContext, mood: str = "unspecified", objectives: List[str] = None, summary: str = "Quick check-in completed.") -> str:
+        """Write a new wellness check-in entry to the JSON file.
+        
+        Call this right after recap, even in short sessions.
+        
+        Args:
+            mood: User's self-reported mood/energy (e.g., "7/10, steady but a bit stressed").
+            objectives: Array of 1-3 goals (e.g., ["Walk for 10 min", "Finish report"]; defaults to ["none shared"]).
+            summary: Your one-sentence agent reflection (e.g., "Great start—small steps will build momentum!").
+        
+        Returns:
+            Confirmation message like 'Log saved successfully.'
+        """
+        if objectives is None:
+            objectives = ["none shared"]
+        entry = {
+            "date": datetime.now().isoformat(),
+            "mood": mood,
+            "objectives": objectives,
+            "summary": summary
+        }
+        logger.info(f"Saving wellness log entry: {entry}")
+        try:
+            try:
+                with open('wellness_log.json', 'r') as f:
+                    log = json.load(f)
+            except FileNotFoundError:
+                log = []
+            log.append(entry)
+            with open('wellness_log.json', 'w') as f:
+                json.dump(log, f, indent=2)
+            logger.info("Wellness log saved successfully.")
+            return "Log saved successfully."
+        except Exception as e:
+            logger.error(f"Error writing log: {e}")
+            return "Sorry, couldn't save the log this time."
+
+    @function_tool
+    async def write_notion_entry(self, context: RunContext, mood: str = "unspecified", energy: str = "unspecified", goals: List[str] = None) -> str:
+        """Write a wellness check-in entry to Notion database.
+        
+        Use this to save structured wellness data to Notion for tracking and visualization.
+        Call this alongside write_wellness_log for dual logging.
+        
+        Args:
+            mood: User's mood description (e.g., "calm", "7/10 - optimistic").
+            energy: User's energy level (e.g., "medium", "6/10").
+            goals: List of 1-3 daily goals/objectives.
+        
+        Returns:
+            Confirmation message or error description.
+        """
+        if goals is None:
+            goals = ["none shared"]
+        
+        if not NOTION_TOKEN or not DATABASE_ID:
+            logger.warning("Notion credentials not configured")
+            return "Notion logging not configured. Check environment variables."
+        
+        url = "https://api.notion.com/v1/pages"
+        
+        payload = {
+            "parent": {"database_id": DATABASE_ID},
+            "properties": {
+                "Name": {
+                    "title": [
+                        {"text": {"content": f"Wellness Check - {datetime.now().strftime('%b %d, %Y')}"}}
+                    ]
+                },
+                "Date": {
+                    "date": {"start": datetime.now().isoformat()}
+                },
+                "Mood": {
+                    "rich_text": [
+                        {"text": {"content": mood}}
+                    ]
+                },
+                "Energy": {
+                    "rich_text": [
+                        {"text": {"content": energy}}
+                    ]
+                },
+                "Goals": {
+                    "rich_text": [
+                        {"text": {"content": ", ".join(goals)}}
+                    ]
+                }
+            }
+        }
+        
+        try:
+            response = requests.post(url, headers=NOTION_HEADERS, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("Notion entry created successfully")
+                return "Notion entry saved successfully."
+            else:
+                logger.error(f"Notion API error: {response.status_code} - {response.text}")
+                return f"Notion save failed: {response.status_code}"
+        
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Notion request error: {e}")
+            return "Couldn't reach Notion. Check your connection."
+        except Exception as e:
+            logger.error(f"Unexpected error saving to Notion: {e}")
+            return "Error saving to Notion."
 
 
 def prewarm(proc: JobProcess):
@@ -56,7 +176,6 @@ def prewarm(proc: JobProcess):
 
 async def entrypoint(ctx: JobContext):
     # Logging setup
-    # Add any other context you want in all log entries here
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
@@ -88,16 +207,6 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
     # Metrics collection, to measure pipeline performance
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     usage_collector = metrics.UsageCollector()
@@ -112,14 +221,6 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Usage: {summary}")
 
     ctx.add_shutdown_callback(log_usage)
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
