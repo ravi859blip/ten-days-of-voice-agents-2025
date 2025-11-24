@@ -1,0 +1,27 @@
+[
+  {
+    "date": "2025-11-24T21:09:11.846956",
+    "mood": "light mode, steady and busy",
+    "objectives": [
+      "strength training"
+    ],
+    "summary": "User is feeling light, steady, and busy, with a goal of strength training."
+  },
+  {
+    "date": "2025-11-24T21:16:47.880013",
+    "mood": "very tired",
+    "objectives": [
+      "study for 30-40 minutes",
+      "prioritize rest"
+    ],
+    "summary": "User is very tired, has an exam tomorrow, and plans to study for 30-40 minutes before prioritizing rest."
+  },
+  {
+    "date": "2025-11-24T21:20:07.900341",
+    "mood": "Good, high energy",
+    "objectives": [
+      "gym training"
+    ],
+    "summary": "User is feeling good with high energy and plans to do gym training."
+  }
+]
