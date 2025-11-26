@@ -1,0 +1,22 @@
+[
+    {
+        "name": "Ravi",
+        "company": "versal",
+        "email": "ravishripad25@gmail.com",
+        "role": "data analyst",
+        "use_case": "upskilling for current role, learn Machine Learning for a customer and sentiment project",
+        "team_size": null,
+        "timeline": null,
+        "timestamp": "2025-11-26T21:21:19.319239"
+    },
+    {
+        "name": "Ravi",
+        "company": "versal",
+        "email": "ravishripad25@gmail.com",
+        "role": "Data Analyst",
+        "use_case": "Sales purpose",
+        "team_size": null,
+        "timeline": "5th December",
+        "timestamp": "2025-11-26T21:29:11.587813"
+    }
+]
